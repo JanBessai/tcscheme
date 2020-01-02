@@ -41,6 +41,9 @@
         (todo (car (cdr res)))
         (report-error (list 'unbound-variable x)))))
 
+(define (type-mismatch M expected got)
+  (list M ': 'expected expected 'got got))
+
 (define (synthesize report-error todo Gamma M)
   (cond 
     ((variable? M)
@@ -51,24 +54,28 @@
                  (cons (binder M) Gamma) 
                  (body M)))
     ((application? M)
-     (synthesize 
-       report-error
-       (lambda (ST) 
-          (if (arrow? ST)
-              (check report-error 
-                     (lambda (ok) (todo (target ST))) 
-                     Gamma 
-                     (argument M)
-                     (source ST))
-              (synthesize report-error
-                          (lambda (S)
-                            (report-error 
-                              (list 'expected (list '-> S 'SomeType) 'got ST)))
-                          Gamma
-                          (argument M))))
-       Gamma
-       (functional M)))
-    (report-error (list 'unknown-statement M))))
+     (let ((functional (functional M)))
+       (synthesize 
+         report-error
+         (lambda (ST) 
+            (if (arrow? ST)
+                (check report-error 
+                       (lambda (ok) (todo (target ST))) 
+                       Gamma 
+                       (argument M)
+                       (source ST))
+                (synthesize report-error
+                              (lambda (S)
+                                (report-error (list
+                                    (type-mismatch 
+                                      functional
+                                      (list '-> S 'SomeType) 
+                                      ST))))
+                              Gamma
+                            (argument M))))
+         Gamma
+         functional)))
+    (report-error (list (list 'unknown-statement M)))))
 
 (define (check report-error todo Gamma M A)
   (cond 
@@ -77,43 +84,51 @@
        report-error
        (lambda (T)
           (if (equal? A T) 
-              (todo M)
-              (report-error (list 'expected A 'got T))))
+              (todo M) 
+              (report-error (list (type-mismatch M A T)))))
        Gamma
        M))
     ((lambda? M)
      (let ((S (ascribed-type (binder M))))
        (if (and (arrow? A) (equal? (source A) S))
-         (check report-error  
+         (check report-error
                 (lambda (body) (todo (list 'lambda (binder M) body)))
                 (cons (binder M) Gamma)
                 (body M)
                 (target A))
-         (report-error (list 'expected A 'got (list '-> S 'SomeType))))))
+         (report-error (list (type-mismatch M A (list '-> S 'SomeType)))))))
     ((application? M)
      (let ((functional (functional M)))
        (synthesize
          report-error
          (lambda (ST)
             (if (arrow? ST)
-                (let ((T (target ST)))
-                  (check report-error
-                         (lambda (argument)
-                           (if (equal? A T)
-                             (todo (list functional argument))
-                             (report-error (list 'expected A 'got T))))
-                         Gamma
-                         (argument M)
-                         (source ST)))
+                (let ((T (target ST))
+                      (continue (lambda (report-error todo)
+                                  (check report-error
+                                         todo 
+                                         Gamma
+                                         (argument M) 
+                                         (source ST)))))
+                    (if (equal? A T)
+                        (continue report-error
+                                  (lambda (argument) 
+                                    (todo (list functional argument))))
+                        (let ((error-message (type-mismatch M A T)))
+                          (continue 
+                            (lambda (errors)
+                              (report-error (cons error-message errors)))
+                            (lambda (ok) 
+                              (report-error (list error-message)))))))
                 (synthesize report-error
-                            (lambda (S) 
+                            (lambda (S)
                               (report-error 
-                                (list 'expected (list '-> S A) 'got ST)))
+                                ((type-mismatch functional (list '-> S A) ST))))
                             Gamma
                   (argument M))))
          Gamma
          functional)))
-    (report-error (list 'unknown-statement M))))
+    (report-error (list (list 'unknown-statement M)))))
 
 (define (erase M)
   (cond ((variable? M) M)
@@ -128,7 +143,8 @@
 
 (define (id x) x)
 
-(display 
+(for-each 
+  (lambda (line) (begin (display line) (newline)))
   (list 
     (check id erase '((x A)) `x 'A)
     (check id erase '((x B)) `x 'A)
@@ -142,5 +158,6 @@
     (check id erase '((f (-> A B))) `((lambda (f (-> A B)) (lambda (x A) (f x))) f) '(-> B B))
     (check id erase '((f X)) `((lambda (f (-> A B)) (lambda (x A) (f x))) f) '(-> A B))
     (check id erase '((f (-> A B))) `((lambda (f (-> A B)) (lambda (x A) (x f))) f) '(-> A B))
+    (check id erase '((f (-> A B))) `((lambda (f (-> A B)) (lambda (x A) (f x))) (f f)) '(-> A B))
   ))
 
