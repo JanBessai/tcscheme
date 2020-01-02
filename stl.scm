@@ -77,55 +77,70 @@
        report-error
        (lambda (T)
           (if (equal? A T) 
-              (todo #t)
+              (todo M)
               (report-error (list 'expected A 'got T))))
        Gamma
        M))
     ((lambda? M)
      (let ((S (ascribed-type (binder M))))
        (if (and (arrow? A) (equal? (source A) S))
-         (check report-error todo (cons (binder M) Gamma) (body M) (target A))
+         (check report-error  
+                (lambda (body) (todo (list 'lambda (binder M) body)))
+                (cons (binder M) Gamma)
+                (body M)
+                (target A))
          (report-error (list 'expected A 'got (list '-> S 'SomeType))))))
     ((application? M)
-     (synthesize
-       report-error
-       (lambda (ST)
-          (if (arrow? ST)
-              (let ((T (target ST)))
-                (check report-error 
-                       (lambda (ok)
-                         (if (equal? A T)
-                           (todo #t)
-                           (report-error (list 'expected A 'got T))))
-                       Gamma
-                       (argument M)
-                       (source ST)))
-              (synthesize report-error
-                          (lambda (S) 
-                            (report-error 
-                              (list 'expected (list '-> S A) 'got ST)))
-                          Gamma
-                (argument M))))
-       Gamma
-       (functional M)))
+     (let ((functional (functional M)))
+       (synthesize
+         report-error
+         (lambda (ST)
+            (if (arrow? ST)
+                (let ((T (target ST)))
+                  (check report-error
+                         (lambda (argument)
+                           (if (equal? A T)
+                             (todo (list functional argument))
+                             (report-error (list 'expected A 'got T))))
+                         Gamma
+                         (argument M)
+                         (source ST)))
+                (synthesize report-error
+                            (lambda (S) 
+                              (report-error 
+                                (list 'expected (list '-> S A) 'got ST)))
+                            Gamma
+                  (argument M))))
+         Gamma
+         functional)))
     (report-error (list 'unknown-statement M))))
+
+(define (erase M)
+  (cond ((variable? M) M)
+        ((application? M) 
+         (list (erase (functional M))
+               (erase (argument M))))
+        ((lambda? M)
+         (list 'lambda
+               (bound-var (binder M))
+               (erase (body M))))
+        (list 'unknown-statement M)))
 
 (define (id x) x)
 
 (display 
   (list 
-    (check id id '((x A)) `x 'A)
-    (check id id '((x B)) `x 'A)
-    (check id id '((x A)) `y 'A)
-    (check id id '() `(lambda (x A) x) '(-> A A))
-    (check id id '() `(lambda (x (-> A A)) x) '(-> (-> A A) (-> A A)))
-    (check id id '() `(lambda (x A) x) '(-> A (-> A A)))
-    (check id id '() `(lambda (x A) (lambda (y B) x)) '(-> A (-> B A)))
-    (check id id '() `(lambda (x A) (lambda (y B) y)) '(-> A (-> B B)))
-    (check id id '((f (-> A B))) `((lambda (f (-> A B)) (lambda (x A) (f x))) f) '(-> A B))
-    (check id id '((f (-> A B))) `((lambda (f (-> A B)) (lambda (x A) (f x))) f) '(-> B B))
-    (check id id '((f X)) `((lambda (f (-> A B)) (lambda (x A) (f x))) f) '(-> A B))
-    (check id id '((f (-> A B))) `((lambda (f (-> A B)) (lambda (x A) (x f))) f) '(-> A B))
+    (check id erase '((x A)) `x 'A)
+    (check id erase '((x B)) `x 'A)
+    (check id erase '((x A)) `y 'A)
+    (check id erase '() `(lambda (x A) x) '(-> A A))
+    (check id erase '() `(lambda (x (-> A A)) x) '(-> (-> A A) (-> A A)))
+    (check id erase '() `(lambda (x A) x) '(-> A (-> A A)))
+    (check id erase '() `(lambda (x A) (lambda (y B) x)) '(-> A (-> B A)))
+    (check id erase '() `(lambda (x A) (lambda (y B) y)) '(-> A (-> B B)))
+    (check id erase '((f (-> A B))) `((lambda (f (-> A B)) (lambda (x A) (f x))) f) '(-> A B))
+    (check id erase '((f (-> A B))) `((lambda (f (-> A B)) (lambda (x A) (f x))) f) '(-> B B))
+    (check id erase '((f X)) `((lambda (f (-> A B)) (lambda (x A) (f x))) f) '(-> A B))
+    (check id erase '((f (-> A B))) `((lambda (f (-> A B)) (lambda (x A) (x f))) f) '(-> A B))
   ))
-
 
